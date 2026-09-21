@@ -1,0 +1,33 @@
+---
+source: tui/src/bottom_pane/chat_composer/status_surface_tests.rs
+expression: "states.join(\"\\n---\\n\")"
+---
+separate=false, width=64
+› Ask Codex
+
+  MODEL · Context 20% used      Plan mode (shift+tab to cycle)
+  ~/project · feature/status-line
+  5h 75% · PR #123
+---
+separate=false, width=32
+› Ask Codex
+
+  MODEL · Context 2… Plan mode
+  ~/project · feature/status-li…
+  5h 75% · PR #123
+---
+separate=true, width=64
+› Ask Codex
+
+  MODEL · Context 20% used                           Plan mode
+  ~/project · feature/status-line
+  5h 75% · PR #123
+  ? for shortcuts
+---
+separate=true, width=32
+› Ask Codex
+
+  MODEL · Context 2… Plan mode
+  ~/project · feature/status-li…
+  5h 75% · PR #123
+  ? for shortcuts

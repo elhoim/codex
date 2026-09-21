@@ -13,8 +13,8 @@
 //! otherwise idle.
 //!
 //! Terminology used in this module:
-//! - "status line" means the configurable contextual row built from `/statusline` items such as
-//!   model, git branch, and context usage.
+//! - "status line" means the configurable contextual rows built from `/statusline` items such as
+//!   model, git branch, and context usage, with optional explicit line breaks and spaces.
 //! - "instructional footer" means a row that tells the user what to do next, such as quit
 //!   confirmation, shortcut help, or queue hints.
 //! - "contextual footer" means the footer is free to show ambient context instead of an
@@ -59,6 +59,7 @@ use ratatui::style::Styled;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
@@ -81,7 +82,7 @@ pub(crate) struct FooterProps {
     ///
     /// This is rendered when `mode` is `FooterMode::QuitShortcutReminder`.
     pub(crate) quit_shortcut_key: KeyBinding,
-    pub(crate) status_line_value: Option<Line<'static>>,
+    pub(crate) status_line_value: Option<Text<'static>>,
     pub(crate) status_line_enabled: bool,
     pub(crate) key_hints: FooterKeyHints,
     /// Active thread label shown when the footer is rendering contextual information instead of an
@@ -768,8 +769,14 @@ fn footer_from_props_lines(
     let key_hints = props.key_hints;
     // Passive footer context can come from the configurable status line, the
     // active agent label, or both combined.
-    if let Some(status_line) = passive_footer_status_line(props) {
-        return vec![status_line];
+    if let Some(first) = passive_footer_status_line(props) {
+        let mut lines = vec![first];
+        if props.status_line_enabled
+            && let Some(text) = &props.status_line_value
+        {
+            lines.extend(text.lines.iter().skip(/*n*/ 1).cloned());
+        }
+        return lines;
     }
     match props.mode {
         FooterMode::QuitShortcutReminder => {
@@ -826,7 +833,11 @@ pub(crate) fn passive_footer_status_line(props: &FooterProps) -> Option<Line<'st
     }
 
     let mut line = if props.status_line_enabled {
-        props.status_line_value.clone()
+        props
+            .status_line_value
+            .as_ref()
+            .and_then(|text| text.lines.first())
+            .cloned()
     } else {
         None
     };
@@ -1532,7 +1543,7 @@ mod tests {
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-            status_line_value: Some(Line::from("Status line content".to_string())),
+            status_line_value: Some(Text::from("Status line content".to_string())),
             status_line_enabled: true,
             key_hints: FooterKeyHints::default_bindings(),
             active_agent_label: None,
@@ -1548,7 +1559,7 @@ mod tests {
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-            status_line_value: Some(Line::from("Status line content".to_string())),
+            status_line_value: Some(Text::from("Status line content".to_string())),
             status_line_enabled: true,
             key_hints: FooterKeyHints::default_bindings(),
             active_agent_label: None,
@@ -1564,7 +1575,7 @@ mod tests {
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-            status_line_value: Some(Line::from("Status line content".to_string())),
+            status_line_value: Some(Text::from("Status line content".to_string())),
             status_line_enabled: true,
             key_hints: FooterKeyHints::default_bindings(),
             active_agent_label: None,
@@ -1655,7 +1666,7 @@ mod tests {
             collaboration_modes_enabled: true,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-            status_line_value: Some(Line::from(
+            status_line_value: Some(Text::from(
                 "Status line content that should truncate before the mode indicator".to_string(),
             )),
             status_line_enabled: true,
@@ -1695,7 +1706,7 @@ mod tests {
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-            status_line_value: Some(Line::from("Status line content".to_string())),
+            status_line_value: Some(Text::from("Status line content".to_string())),
             status_line_enabled: true,
             key_hints: FooterKeyHints::default_bindings(),
             active_agent_label: Some("Robie [explorer]".to_string()),
@@ -1714,7 +1725,7 @@ mod tests {
             collaboration_modes_enabled: true,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-            status_line_value: Some(Line::from(
+            status_line_value: Some(Text::from(
                 "Status line content that is definitely too long to fit alongside the mode label"
                     .to_string(),
             )),

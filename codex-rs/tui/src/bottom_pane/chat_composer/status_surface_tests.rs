@@ -14,7 +14,7 @@ fn composer() -> ChatComposer {
         /*disable_paste_burst*/ true,
     );
     composer.set_status_line_enabled(/*enabled*/ true);
-    composer.set_status_line(Some(Line::from("MODEL · ~/project · Context 20% used")));
+    composer.set_status_line(Some(Text::from("MODEL · ~/project · Context 20% used")));
     composer
 }
 
@@ -38,6 +38,15 @@ fn render_with_height(
         footer,
         ..ComposerRenderOptions::default()
     });
+    render_with_options(composer, width, options, height)
+}
+
+fn render_with_options(
+    composer: &ChatComposer,
+    width: u16,
+    options: ComposerRenderOptions<'_>,
+    height: Option<u16>,
+) -> (String, Option<(u16, u16)>) {
     let height = height.unwrap_or_else(|| composer.desired_height_with_options(width, options));
     let area = Rect::new(/*x*/ 0, /*y*/ 8, width, height);
     let mut buf = Buffer::empty(Rect::new(/*x*/ 0, /*y*/ 0, width, area.bottom()));
@@ -55,6 +64,178 @@ fn render_with_height(
         .collect::<Vec<_>>()
         .join("\n");
     (text, composer.cursor_pos_with_options(area, options))
+}
+
+#[test]
+fn multiline_status_line_preserves_row_order_and_first_row_indicator() {
+    let mut composer = composer();
+    composer.set_status_line(Some(
+        vec![
+            Line::from("MODEL · Context 20% used"),
+            Line::from("~/project · feature/status-line"),
+            Line::from("5h 75% · PR #123"),
+        ]
+        .into(),
+    ));
+    composer.set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
+    let mut states = Vec::new();
+    for separate_status_line in [false, true] {
+        for (width, expected_project) in [
+            (64, "~/project · feature/status-line"),
+            (32, "~/project · feature/status-li…"),
+        ] {
+            let options = composer.resolve_render_options(ComposerRenderOptions {
+                separate_status_line,
+                ..ComposerRenderOptions::default()
+            });
+            let (text, cursor) =
+                render_with_options(&composer, width, options, /*height*/ None);
+            let rows: Vec<_> = text.lines().collect();
+            let first = rows.iter().position(|line| line.contains("MODEL")).unwrap();
+            assert_eq!(
+                (
+                    rows[first].contains("Plan mode"),
+                    rows[first + 1].trim(),
+                    rows[first + 2].trim(),
+                    cursor,
+                ),
+                (true, expected_project, "5h 75% · PR #123", Some((2, 9)),)
+            );
+            assert_eq!(text.matches("Plan mode").count(), 1);
+            states.push(format!(
+                "separate={separate_status_line}, width={width}\n{}",
+                text.trim_start_matches('\n')
+            ));
+        }
+    }
+    insta::assert_snapshot!("multiline_status_line_layouts", states.join("\n---\n"));
+}
+
+#[test]
+fn multiline_status_line_yields_to_inline_queue_but_persists_separately() {
+    let mut composer = composer();
+    composer.set_status_line(Some("MODEL\n~/project\n5h 75%".into()));
+    composer.set_text_content("Continue the task".into(), Vec::new(), Vec::new());
+    composer.set_task_running(/*running*/ true);
+    for (separate_status_line, expected) in [
+        (false, Vec::new()),
+        (true, vec!["MODEL", "~/project", "5h 75%"]),
+    ] {
+        let options = composer.resolve_render_options(ComposerRenderOptions {
+            separate_status_line,
+            ..ComposerRenderOptions::default()
+        });
+        let (text, _) =
+            render_with_options(&composer, /*width*/ 48, options, /*height*/ None);
+        assert_eq!(
+            text.lines()
+                .skip(/*n*/ 11)
+                .map(str::trim)
+                .take_while(|line| !line.starts_with("tab to queue"))
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let last_row = text.lines().last().unwrap().trim_start();
+        assert!(last_row.starts_with("tab to queue message"));
+        assert!(text.contains("› Continue the task"));
+    }
+}
+
+#[test]
+fn multiline_status_line_keeps_warning_on_its_first_row_without_shrinking_later_rows() {
+    let mut composer = composer();
+    composer.set_status_line(Some(
+        "MODEL\n~/project · feature/status-line\n5h 75%".into(),
+    ));
+    composer.footer.show_warnings_key = Some(key_hint::plain(KeyCode::F(2)).into());
+    for (separate_status_line, expected_height) in [(false, 6), (true, 7)] {
+        let options = composer.resolve_render_options(ComposerRenderOptions {
+            separate_status_line,
+            warning_count: 2,
+            ..ComposerRenderOptions::default()
+        });
+        let (text, _) =
+            render_with_options(&composer, /*width*/ 32, options, /*height*/ None);
+        let rows: Vec<_> = text.lines().collect();
+        let first = rows.iter().position(|line| line.contains("MODEL")).unwrap();
+        assert_eq!(
+            (
+                rows.len() - 8,
+                rows[first].contains("⚠ 2"),
+                rows[first + 1].trim(),
+                rows[first + 2].trim(),
+                rows.last().unwrap().contains("⚠ 2"),
+            ),
+            (
+                expected_height,
+                !separate_status_line,
+                "~/project · feature/status-li…",
+                "5h 75%",
+                separate_status_line,
+            )
+        );
+    }
+}
+
+#[test]
+fn multiline_status_line_clips_after_preserving_prompt_and_hints() {
+    let mut composer = composer();
+    composer.set_status_line(Some("FIRST\nSECOND\nTHIRD".into()));
+    for separate_status_line in [false, true] {
+        let options = composer.resolve_render_options(ComposerRenderOptions {
+            separate_status_line,
+            ..ComposerRenderOptions::default()
+        });
+        for (height, inline_rows, separate_rows) in
+            [(3, 0, 0), (4, 1, 0), (5, 2, 1), (6, 3, 2), (7, 3, 3)]
+        {
+            let (text, cursor) =
+                render_with_options(&composer, /*width*/ 40, options, Some(height));
+            let expected_rows = if separate_status_line {
+                separate_rows
+            } else {
+                inline_rows
+            };
+            assert_eq!(
+                ["FIRST", "SECOND", "THIRD"].map(|row| text.contains(row)),
+                [expected_rows >= 1, expected_rows >= 2, expected_rows >= 3]
+            );
+            assert!(text.contains("› Ask Codex"));
+            assert!(cursor.is_some_and(|(x, y)| x < 40 && (8..8 + height).contains(&y)));
+            if separate_status_line && height >= 4 {
+                assert_eq!(text.lines().last().map(str::trim), Some("? for shortcuts"));
+            }
+        }
+    }
+}
+
+#[test]
+fn multiline_status_line_links_cells_on_later_rows() {
+    let mut composer = composer();
+    composer.set_status_line(Some(
+        vec![
+            Line::from("MODEL"),
+            Line::from("PR #123".cyan().underlined()),
+        ]
+        .into(),
+    ));
+    let url = "https://github.com/openai/codex/pull/123";
+    composer.set_status_line_hyperlink(Some(url.to_string()));
+    for separate_status_line in [false, true] {
+        let options = composer.resolve_render_options(ComposerRenderOptions {
+            separate_status_line,
+            ..ComposerRenderOptions::default()
+        });
+        let height = composer.desired_height_with_options(/*width*/ 40, options);
+        let area = Rect::new(/*x*/ 3, /*y*/ 5, /*width*/ 40, height);
+        let mut buf = Buffer::empty(area);
+        composer.render_with_options(area, &mut buf, /*mask_char*/ None, options);
+        let marked_rows = (area.y..area.bottom())
+            .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
+            .filter_map(|(x, y)| buf[(x, y)].symbol().contains(url).then_some(y))
+            .collect::<Vec<_>>();
+        assert_eq!(marked_rows, vec![9; 6]);
+    }
 }
 
 #[test]

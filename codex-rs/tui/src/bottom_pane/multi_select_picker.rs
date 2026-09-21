@@ -52,6 +52,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::text::Text;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
@@ -107,16 +108,17 @@ pub type ConfirmCallback = Box<dyn Fn(&[String], &AppEventSender) + Send + Sync>
 /// Callback invoked when the user cancels the picker (presses Escape).
 pub type CancelCallback = Box<dyn Fn(&AppEventSender) + Send + Sync>;
 
-/// Callback to generate an optional preview line based on current item states.
+/// Callback to generate an optional preview text based on current item states.
 /// Returns `None` to hide the preview area.
-pub type PreviewCallback = Box<dyn Fn(&[MultiSelectItem]) -> Option<Line<'static>> + Send + Sync>;
+pub type PreviewCallback = Box<dyn Fn(&[MultiSelectItem]) -> Option<Text<'static>> + Send + Sync>;
 
 /// A single selectable item in the multi-select picker.
 ///
-/// Each item has a unique identifier, display name, optional description,
+/// Each item has an identifier, display name, optional description,
 /// and an enabled/disabled state that can be toggled by the user.
+#[derive(Clone)]
 pub(crate) struct MultiSelectItem {
-    /// Unique identifier returned in the confirm callback when this item is enabled.
+    /// Identifier returned in the confirm callback; repeatable items may share it.
     pub id: String,
 
     /// Display name shown in the picker list. Will be truncated if too long.
@@ -192,14 +194,17 @@ pub(crate) struct MultiSelectPicker {
     /// Whether left/right arrow reordering is enabled.
     ordering_enabled: bool,
 
+    /// Item IDs that retain an unchecked copy after selection.
+    repeatable_ids: Vec<String>,
+
     /// Shared list keybindings for navigation and completion.
     keymap: ListKeymap,
 
-    /// Optional callback to generate a preview line from current item states.
+    /// Optional callback to generate preview text from current item states.
     preview_builder: Option<PreviewCallback>,
 
-    /// Cached preview line (updated on item changes).
-    preview_line: Option<Line<'static>>,
+    /// Cached preview text (updated on item changes).
+    preview_line: Option<Text<'static>>,
 
     /// Callback invoked when items change (toggle or reorder).
     on_change: Option<ChangeCallBack>,
@@ -406,6 +411,18 @@ impl MultiSelectPicker {
         };
 
         item.enabled = !item.enabled;
+        if item.enabled && self.repeatable_ids.contains(&item.id) {
+            let mut replacement = item.clone();
+            replacement.enabled = false;
+            if !self
+                .items
+                .iter()
+                .any(|item| item.id == replacement.id && !item.enabled)
+            {
+                self.items.push(replacement);
+                self.apply_filter();
+            }
+        }
         self.update_preview_line();
         if let Some(on_change) = &self.on_change {
             on_change(&self.items, &self.app_event_tx);
@@ -497,7 +514,7 @@ impl MultiSelectPicker {
         }
     }
 
-    /// Regenerates the preview line using the preview callback.
+    /// Regenerates the preview text using the preview callback.
     ///
     /// Called after any item state change (toggle or reorder).
     fn update_preview_line(&mut self) {
@@ -604,11 +621,15 @@ impl Renderable for MultiSelectPicker {
     fn desired_height(&self, width: u16) -> u16 {
         let rows = self.build_rows();
         let rows_height = self.rows_height(&rows);
-        let preview_height = if self.preview_line.is_some() { 1 } else { 0 };
+        let preview_height = self.preview_line.as_ref().map_or(/*default*/ 0, |text| {
+            text.height().try_into().unwrap_or(u16::MAX)
+        });
 
         let mut height = self.header.desired_height(width.saturating_sub(4));
         height = height.saturating_add(rows_height + 3);
-        height.saturating_add(self.footer_lines(width).len() as u16 + preview_height)
+        height
+            .saturating_add(self.footer_lines(width).len() as u16)
+            .saturating_add(preview_height)
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -616,10 +637,29 @@ impl Renderable for MultiSelectPicker {
             return;
         }
 
-        // Reserve the footer line for the key-hint row.
-        let preview_height = if self.preview_line.is_some() { 1 } else { 0 };
+        let header_height = self
+            .header
+            .desired_height(area.width.saturating_sub(/*rhs*/ 4));
+        let rows = self.build_rows();
+        // Previews yield before the header, search, and up to three result rows.
+        // The extra two rows account for the top inset and search input.
+        let minimum_content_height = header_height
+            .saturating_add(/*rhs*/ 2)
+            .saturating_add(rows.rows.len().clamp(/*min*/ 1, /*max*/ 3) as u16);
         let hint_lines = self.footer_lines(area.width);
-        let hint_height = hint_lines.len() as u16;
+        let hint_height = (hint_lines.len() as u16).min(area.height);
+        let preview_height = self
+            .preview_line
+            .as_ref()
+            .map_or(
+                /*default*/ 0,
+                |text| text.height().try_into().unwrap_or(u16::MAX),
+            )
+            .min(
+                area.height
+                    .saturating_sub(hint_height)
+                    .saturating_sub(minimum_content_height),
+            );
         let footer_height = hint_height + preview_height;
         let [content_area, footer_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(footer_height)]).areas(area);
@@ -628,10 +668,6 @@ impl Renderable for MultiSelectPicker {
             .style(user_message_style())
             .render(content_area, buf);
 
-        let header_height = self
-            .header
-            .desired_height(content_area.width.saturating_sub(4));
-        let rows = self.build_rows();
         let rows_height = self.rows_height(&rows);
         let [header_area, search_area, list_area] =
             picker_rows::layout(content_area, header_height, /*search*/ 1, rows_height);
@@ -661,9 +697,11 @@ impl Renderable for MultiSelectPicker {
         }
 
         let hint_area = if let Some(preview_line) = &self.preview_line {
-            let [preview_area, hint_area] =
-                Layout::vertical([Constraint::Length(1), Constraint::Length(hint_height)])
-                    .areas(footer_area);
+            let [preview_area, hint_area] = Layout::vertical([
+                Constraint::Length(preview_height),
+                Constraint::Length(hint_height),
+            ])
+            .areas(footer_area);
             let preview_area = Rect {
                 x: preview_area.x + 2,
                 y: preview_area.y,
@@ -671,9 +709,10 @@ impl Renderable for MultiSelectPicker {
                 height: preview_area.height,
             };
             let max_preview_width = preview_area.width.saturating_sub(2) as usize;
-            let preview_line =
-                truncate_line_with_ellipsis_if_overflow(preview_line.clone(), max_preview_width);
-            preview_line.render(preview_area, buf);
+            for (line, row) in preview_line.lines.iter().zip(preview_area.rows()) {
+                truncate_line_with_ellipsis_if_overflow(line.clone(), max_preview_width)
+                    .render(row, buf);
+            }
             hint_area
         } else {
             footer_area
@@ -696,7 +735,7 @@ impl Renderable for MultiSelectPicker {
 /// let picker = MultiSelectPicker::builder("Title".into(), /*subtitle*/ None, tx)
 ///     .items(items)
 ///     .enable_ordering()
-///     .on_preview(|items| Some(Line::from("Preview")))
+///     .on_preview(|items| Some(Text::from("Preview")))
 ///     .on_confirm(|ids, tx| { /* handle */ })
 ///     .on_cancel(|tx| { /* handle */ })
 ///     .build();
@@ -707,6 +746,7 @@ pub(crate) struct MultiSelectPickerBuilder {
     instructions: Vec<Span<'static>>,
     items: Vec<MultiSelectItem>,
     ordering_enabled: bool,
+    repeatable_ids: Vec<String>,
     app_event_tx: AppEventSender,
     keymap: ListKeymap,
     preview_builder: Option<PreviewCallback>,
@@ -724,6 +764,7 @@ impl MultiSelectPickerBuilder {
             instructions: Vec::new(),
             items: Vec::new(),
             ordering_enabled: false,
+            repeatable_ids: Vec::new(),
             app_event_tx,
             keymap: RuntimeKeymap::defaults().list,
             preview_builder: None,
@@ -747,19 +788,25 @@ impl MultiSelectPickerBuilder {
         self
     }
 
+    /// Keep an unchecked copy of these items available after each selection.
+    pub fn repeatable_items(mut self, ids: Vec<String>) -> Self {
+        self.repeatable_ids = ids;
+        self
+    }
+
     /// Sets the shared list keymap used for navigation and completion.
     pub fn list_keymap(mut self, keymap: ListKeymap) -> Self {
         self.keymap = keymap;
         self
     }
 
-    /// Sets a callback to generate a preview line from the current item states.
+    /// Sets a callback to generate preview text from the current item states.
     ///
-    /// The callback receives all items and should return a [`Line`] to display,
+    /// The callback receives all items and should return [`Text`] to display,
     /// or `None` to hide the preview area.
     pub fn on_preview<F>(mut self, callback: F) -> Self
     where
-        F: Fn(&[MultiSelectItem]) -> Option<Line<'static>> + Send + Sync + 'static,
+        F: Fn(&[MultiSelectItem]) -> Option<Text<'static>> + Send + Sync + 'static,
     {
         self.preview_builder = Some(Box::new(callback));
         self
@@ -844,6 +891,7 @@ impl MultiSelectPickerBuilder {
             header: Box::new(header),
             footer_hint: Line::from(instructions),
             ordering_enabled: self.ordering_enabled,
+            repeatable_ids: self.repeatable_ids,
             keymap: self.keymap,
             search_query: String::new(),
             filtered_indices: Vec::new(),
@@ -890,6 +938,10 @@ pub(crate) fn match_item(
     }
     None
 }
+
+#[cfg(test)]
+#[path = "multi_select_picker_preview_tests.rs"]
+mod preview_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1149,7 +1201,7 @@ mod tests {
         )
         .enable_ordering()
         .on_preview(|items| {
-            Some(Line::from(
+            Some(Text::from(
                 items
                     .iter()
                     .filter(|item| item.enabled)

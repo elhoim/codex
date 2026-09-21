@@ -5,6 +5,39 @@ use codex_app_server_protocol::ThreadUsage;
 use pretty_assertions::assert_eq;
 use ratatui::text::Line;
 
+#[tokio::test]
+async fn status_line_layout_config_renders_multiple_rows() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.thread_name = Some("Layout test".to_string());
+    chat.local_settings.tui.status_line = Some(
+        [
+            "run-state",
+            "space",
+            "space",
+            "thread-name",
+            "line-break",
+            "model",
+            "line-break",
+            "run-state",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+
+    chat.refresh_status_line();
+
+    let model = chat
+        .status_line_value_for_item(StatusLineItem::ModelName)
+        .unwrap();
+    assert_eq!(
+        status_line_text(&chat),
+        Some(format!("Ready  Layout test\n{model}\nReady")),
+    );
+    assert!(drain_insert_history(&mut rx).is_empty());
+}
+
 fn line_text(line: Line<'static>) -> String {
     line.spans
         .into_iter()
@@ -41,7 +74,10 @@ async fn thread_color_preview_matches_footer_while_auto_naming() {
                     )
                     .unwrap();
                     assert_eq!(line, footer);
-                    snapshot.push(format!("pending={pending} colors={use_colors}: {line:?}"));
+                    snapshot.push(format!(
+                        "pending={pending} colors={use_colors}: {:?}",
+                        line.lines[0]
+                    ));
                 }
             }
             insta::assert_snapshot!(snapshot.join("\n"));
@@ -53,7 +89,7 @@ fn status_preview_line_option(chat: &mut ChatWidget, items: &[StatusLineItem]) -
     let preview_data = chat.status_surface_preview_data();
     preview_data
         .status_line_for_items(items.iter().copied(), /*use_theme_colors*/ true)
-        .map(line_text)
+        .map(|text| text.to_string())
 }
 
 fn status_preview_line(chat: &mut ChatWidget, items: &[StatusLineItem]) -> String {

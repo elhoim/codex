@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 
 use codex_protocol::ThreadId;
-use ratatui::text::Line;
+use ratatui::text::Text;
 
 use super::status_line_from_segments;
 use super::status_line_setup::StatusLineItem;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum StatusSurfacePreviewItem {
+    Layout,
     AppName,
     ProjectName,
     ProjectRoot,
@@ -45,6 +46,7 @@ pub(crate) enum StatusSurfacePreviewItem {
 impl StatusSurfacePreviewItem {
     fn placeholder(self) -> &'static str {
         match self {
+            StatusSurfacePreviewItem::Layout => "",
             StatusSurfacePreviewItem::AppName => "codex",
             StatusSurfacePreviewItem::ProjectName => "my-project",
             StatusSurfacePreviewItem::ProjectRoot => "my-project",
@@ -82,6 +84,7 @@ impl StatusSurfacePreviewItem {
 
     pub(crate) fn iter() -> impl Iterator<Item = Self> {
         [
+            Self::Layout,
             Self::AppName,
             Self::ProjectName,
             Self::ProjectRoot,
@@ -237,7 +240,7 @@ impl StatusSurfacePreviewData {
         &self,
         items: I,
         use_theme_colors: bool,
-    ) -> Option<Line<'static>>
+    ) -> Option<Text<'static>>
     where
         I: IntoIterator<Item = StatusLineItem>,
     {

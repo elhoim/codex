@@ -6,7 +6,19 @@ use super::*;
 
 impl ChatComposer {
     pub(super) fn status_surface_height(&self, options: ComposerRenderOptions<'_>) -> u16 {
-        u16::from(options.separate_status_line && self.footer.status_line_enabled)
+        if options.separate_status_line && self.footer.status_line_enabled {
+            self.footer
+                .status_line_value
+                .as_ref()
+                .map_or(/*default*/ 1, |text| {
+                    text.height()
+                        .max(/*other*/ 1)
+                        .try_into()
+                        .unwrap_or(u16::MAX)
+                })
+        } else {
+            0
+        }
     }
 
     pub(super) fn hint_footer_props(&self, options: ComposerRenderOptions<'_>) -> FooterProps {
@@ -51,8 +63,9 @@ impl ChatComposer {
             );
         }
         if let Some(right) = right {
-            render_context_right(area, buf, &right);
+            render_context_right(Rect { height: 1, ..area }, buf, &right);
         }
+        self.render_status_line_continuation(area, buf);
         if let Some(url) = self.footer.status_line_hyperlink_url.as_deref() {
             mark_underlined_hyperlink(buf, area, url);
         }
@@ -60,6 +73,32 @@ impl ChatComposer {
             && let Some(frame_requester) = &self.frame_requester
         {
             frame_requester.schedule_frame_in(EFFORT_STATUS_LINE_FRAME_TICK);
+        }
+    }
+
+    /// Each additional row uses the full width; mode indicators occupy only the first row.
+    pub(super) fn render_status_line_continuation(&self, area: Rect, buf: &mut Buffer) {
+        if let Some(text) = &self.footer.status_line_value {
+            for (line, y) in text
+                .lines
+                .iter()
+                .skip(/*n*/ 1)
+                .zip(area.y.saturating_add(/*rhs*/ 1)..area.bottom())
+            {
+                let row = Rect {
+                    y,
+                    height: 1,
+                    ..area
+                };
+                render_footer_line(
+                    row,
+                    buf,
+                    truncate_line_with_ellipsis_if_overflow(
+                        line.clone(),
+                        usize::from(inset_footer_hint_area(row).width),
+                    ),
+                );
+            }
         }
     }
 }

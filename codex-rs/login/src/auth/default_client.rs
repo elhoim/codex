@@ -148,15 +148,16 @@ pub fn is_first_party_chat_originator(originator_value: &str) -> bool {
 }
 
 pub fn get_codex_user_agent() -> String {
+    // OS metadata is stable during the process; discovering it can spawn subprocesses.
+    static OS_INFO: LazyLock<os_info::Info> = LazyLock::new(os_info::get);
     let build_version = env!("CARGO_PKG_VERSION");
-    let os_info = os_info::get();
     let originator = originator();
     let prefix = format!(
         "{}/{build_version} ({} {}; {}) {}",
         originator.value.as_str(),
-        os_info.os_type(),
-        os_info.version(),
-        os_info.architecture().unwrap_or("unknown"),
+        OS_INFO.os_type(),
+        OS_INFO.version(),
+        OS_INFO.architecture().unwrap_or("unknown"),
         user_agent()
     );
     let suffix = USER_AGENT_SUFFIX

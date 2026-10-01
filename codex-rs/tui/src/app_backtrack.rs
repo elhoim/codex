@@ -169,6 +169,8 @@ impl App {
         self.overlay = Some(Overlay::new_transcript(
             self.transcript_cells.clone(),
             self.keymap.pager.clone(),
+            self.local_settings
+                .copy_on_select(&codex_terminal_detection::terminal_info()),
         ));
         if self.scrollback_has_older_history
             && let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut()
@@ -369,6 +371,9 @@ impl App {
             let chat_widget = &self.chat_widget;
             let detailed = t.is_detailed();
             let size = tui.prepare_draw_size()?;
+            t.sync_search_live_tail(size.width.max(/*other*/ 1), active_key, |width| {
+                chat_widget.active_cell_transcript_hyperlink_lines(width)
+            });
             t.sync_live_tail(size.width.max(/*other*/ 1), active_key, |width| {
                 if detailed {
                     chat_widget.active_cell_transcript_hyperlink_lines(width)

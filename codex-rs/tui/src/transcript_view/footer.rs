@@ -41,28 +41,44 @@ impl TranscriptView {
                 is_interactive: true,
             });
         }
+        let pending = self.is_loading_history() || self.history == TranscriptHistoryState::Failed;
         if has_selected_text {
             return Some(TranscriptFooter {
-                text: first_fitting_line(
-                    [
-                        self.status_line_with_navigation(
-                            "ctrl+c copy · enter copy & follow · esc clear",
-                            motion,
-                        ),
-                        selection_hint(width),
-                    ],
-                    width,
-                )
+                text: if self.tail_visible && !pending {
+                    selection_hint(width)
+                } else {
+                    first_fitting_line(
+                        [
+                            self.status_line_with_navigation(
+                                &format!(
+                                    "{} copy · enter copy & follow · esc clear",
+                                    crate::key_hint::ctrl(KeyCode::Char('c')).display_label()
+                                ),
+                                motion,
+                            ),
+                            selection_hint(width),
+                        ],
+                        width,
+                    )
+                }
                 .into(),
                 cursor_column: None,
                 is_interactive: true,
             });
         }
-        if self.is_activity_focused() {
+        if self.search.is_reading() && !pending && !self.is_activity_focused() {
+            return Some(TranscriptFooter {
+                text: self.search.status_line(width, self.history).into(),
+                cursor_column: None,
+                is_interactive: false,
+            });
+        }
+        if self.is_activity_focused() && !pending {
             return self.disclosure_footer(width);
         }
-        let pending = self.is_loading_history() || self.history == TranscriptHistoryState::Failed;
-        let can_return = self.selection.is_none() && self.can_return_to_latest();
+        // Selection can pause following without hiding the current final row.
+        let can_return =
+            self.selection.is_none() && self.can_return_to_latest() && !self.tail_visible;
         (pending || self.unseen_activity || can_return).then(|| {
             let navigation = if self.can_return_to_latest() {
                 latest_navigation
@@ -186,7 +202,10 @@ impl TranscriptView {
 fn selection_hint(width: u16) -> Line<'static> {
     first_fitting_line(
         [
-            "ctrl+c copy · enter copy & follow · esc clear",
+            &format!(
+                "{} copy · enter copy & follow · esc clear",
+                crate::key_hint::ctrl(KeyCode::Char('c')).display_label()
+            ),
             "enter copy & follow · esc clear",
             "enter copy+↓ · esc",
             "esc clear",
@@ -211,6 +230,8 @@ pub(super) fn navigation_line(navigation: &str) -> Line<'static> {
             " clear selection",
             " copy+↓",
             " previous",
+            " older",
+            " newer",
             " latest",
             " retry",
             " select",

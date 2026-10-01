@@ -63,6 +63,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use std::time::Duration;
 use std::time::Instant;
@@ -2329,7 +2330,7 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) {
+    pub(crate) fn set_status_line(&mut self, status_line: Option<Text<'static>>) {
         if self.composer.set_status_line(status_line) {
             self.request_redraw();
         }

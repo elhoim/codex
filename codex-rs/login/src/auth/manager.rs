@@ -57,7 +57,6 @@ pub use crate::auth::storage::AuthDotJson;
 pub use crate::auth::storage::AuthKeyringBackendKind;
 use crate::auth::storage::AuthStorageBackend;
 use crate::auth::storage::create_auth_storage;
-use crate::default_client::create_client;
 use crate::default_client::create_default_auth_client;
 use crate::oauth::ErrorBodyLimit;
 use crate::oauth::OAuthClient;
@@ -197,7 +196,6 @@ pub struct ChatgptAuthTokens {
 #[derive(Debug, Clone)]
 struct ChatgptAuthState {
     auth_dot_json: Arc<Mutex<Option<AuthDotJson>>>,
-    client: HttpClient,
 }
 
 const TOKEN_REFRESH_INTERVAL: i64 = 8;
@@ -407,10 +405,8 @@ impl CodexAuth {
         }
 
         let storage_mode = auth_dot_json.storage_mode(auth_credentials_store_mode);
-        let client = create_default_auth_client(&refresh_token_endpoint(), auth_route_config)?;
         let state = ChatgptAuthState {
             auth_dot_json: Arc::new(Mutex::new(Some(auth_dot_json))),
-            client,
         };
 
         match auth_mode {
@@ -833,7 +829,6 @@ impl CodexAuth {
 
         let state = ChatgptAuthState {
             auth_dot_json: Arc::new(Mutex::new(Some(auth_dot_json))),
-            client: create_client(),
         };
         let dummy_auth_id = NEXT_DUMMY_AUTH_ID.fetch_add(1, Ordering::Relaxed);
         let storage = create_auth_storage(
@@ -857,7 +852,6 @@ impl CodexAuth {
         )?;
         let state = ChatgptAuthState {
             auth_dot_json: Arc::new(Mutex::new(Some(auth_dot_json))),
-            client: create_client(),
         };
         Ok(Self::ChatgptAuthTokens(ChatgptAuthTokens { state }))
     }
@@ -918,10 +912,6 @@ impl ChatgptAuth {
 
     fn storage(&self) -> &Arc<dyn AuthStorageBackend> {
         &self.storage
-    }
-
-    fn client(&self) -> &HttpClient {
-        &self.state.client
     }
 
     fn persist_agent_identity_record(
@@ -3091,7 +3081,10 @@ impl AuthManager {
         auth: &ChatgptAuth,
         refresh_token: String,
     ) -> Result<(), RefreshTokenError> {
-        let refresh_response = request_chatgpt_token_refresh(refresh_token, auth.client()).await?;
+        // Identity-only auth reloads do not need a transport or its TLS trust store.
+        let client = create_default_auth_client(&refresh_token_endpoint(), &self.auth_route_config)
+            .map_err(std::io::Error::from)?;
+        let refresh_response = request_chatgpt_token_refresh(refresh_token, &client).await?;
 
         persist_tokens(
             auth.storage(),

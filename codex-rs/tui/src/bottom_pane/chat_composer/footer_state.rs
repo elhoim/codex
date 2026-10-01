@@ -274,8 +274,15 @@ impl super::ChatComposer {
     }
 
     pub(super) fn footer_hint_height(&self, width: u16, options: ComposerRenderOptions<'_>) -> u16 {
-        if self.show_warning_notice(options) || self.shortcuts_above_composer(options) {
+        if self.shortcuts_above_composer(options) {
             return 1;
+        }
+        if self.show_warning_notice(options) {
+            return if options.footer.is_none() {
+                footer_height(&self.hint_footer_props(options), width).max(/*other*/ 1)
+            } else {
+                1
+            };
         }
         options
             .footer
@@ -356,7 +363,7 @@ pub(super) struct FooterState {
     pub(super) collaboration_mode_indicator: Option<CollaborationModeIndicator>,
     pub(super) goal_status_indicator: Option<GoalStatusIndicator>,
     pub(super) ide_context_active: bool,
-    pub(super) status_line_value: Option<Line<'static>>,
+    pub(super) status_line_value: Option<Text<'static>>,
     pub(super) status_line_hyperlink_url: Option<String>,
     pub(super) status_line_enabled: bool,
     pub(super) side_conversation_context_label: Option<String>,
@@ -398,12 +405,7 @@ impl FooterState {
 
     #[cfg(test)]
     pub(super) fn status_line_text(&self) -> Option<String> {
-        self.status_line_value.as_ref().map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
-        })
+        self.status_line_value.as_ref().map(ToString::to_string)
     }
 }
 

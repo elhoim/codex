@@ -1,0 +1,37 @@
+---
+source: tui/src/bottom_pane/multi_select_picker_preview_tests.rs
+expression: "snapshots.join(\"\\n\\n\")"
+---
+height=11
+
+  Status line
+
+  Type to search
+
+› [x] Model
+
+  gpt-5  medium
+  ~/project/a/very/long/directory/path/that/o…
+  main
+  space toggle · enter save · esc cancel
+
+height=2
+
+  space toggle · enter save · esc cancel
+
+height=1
+  space toggle · enter save · esc cancel
+
+height=12
+
+  Status line
+  Type to search
+› [x] Model
+  preview row 0
+  preview row 1
+  preview row 2
+  preview row 3
+  preview row 4
+  preview row 5
+  preview row 6
+  space toggle · enter save · esc cancel

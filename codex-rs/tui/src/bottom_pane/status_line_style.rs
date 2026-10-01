@@ -5,6 +5,7 @@ use ratatui::style::Style;
 use ratatui::style::Styled;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::text::Text;
 
 use super::status_line_setup::StatusLineItem;
 use crate::render::highlight::foreground_style_for_scopes;
@@ -63,6 +64,7 @@ impl StatusLineAccent {
             | StatusLineItem::ThreadTitle
             | StatusLineItem::WorkspaceHeadline => Self::Thread,
             StatusLineItem::TaskProgress => Self::Progress,
+            StatusLineItem::LineBreak | StatusLineItem::Space => Self::Metadata,
         }
     }
 
@@ -94,7 +96,7 @@ pub(crate) fn status_line_from_segments<I>(
     segments: I,
     use_theme_colors: bool,
     thread_id: Option<ThreadId>,
-) -> Option<Line<'static>>
+) -> Option<Text<'static>>
 where
     I: IntoIterator<Item = (StatusLineItem, String)>,
 {
@@ -108,16 +110,35 @@ fn status_line_from_segments_with_resolver<I, F>(
     use_theme_colors: bool,
     thread_id: Option<ThreadId>,
     theme_style_for_accent: F,
-) -> Option<Line<'static>>
+) -> Option<Text<'static>>
 where
     I: IntoIterator<Item = (StatusLineItem, String)>,
     F: Fn(StatusLineAccent) -> Option<Style>,
 {
+    let mut lines = Vec::new();
     let mut spans = Vec::new();
+    let mut spaces = 0;
     for (item, text) in segments {
-        if !spans.is_empty() {
+        if item == StatusLineItem::LineBreak {
+            if !spans.is_empty() {
+                lines.push(Line::from(std::mem::take(&mut spans)));
+            }
+            spaces = 0;
+            continue;
+        }
+        if item == StatusLineItem::Space {
+            spaces += 1;
+            continue;
+        }
+        if text.is_empty() {
+            continue;
+        }
+        if spaces > 0 {
+            spans.push(" ".repeat(spaces).set_style(secondary_text_style()));
+        } else if !spans.is_empty() {
             spans.push(STATUS_LINE_SEPARATOR.set_style(secondary_text_style()));
         }
+        spaces = 0;
         let style = if use_theme_colors
             && matches!(
                 item,
@@ -150,7 +171,10 @@ where
         spans.push(Span::styled(text, style));
     }
 
-    (!spans.is_empty()).then(|| Line::from(spans))
+    if !spans.is_empty() {
+        lines.push(Line::from(spans));
+    }
+    (!lines.is_empty()).then(|| Text::from(lines))
 }
 
 fn soften_status_line_style(mut style: Style) -> Style {
@@ -231,7 +255,9 @@ mod tests {
             /*thread_id*/ None,
             |_| None,
         )
-        .expect("status line");
+        .expect("status line")
+        .lines
+        .remove(/*index*/ 0);
 
         assert_eq!(line_text(&line), "gpt-5 · /repo · main");
         assert_eq!(line.spans[0].style.fg, Some(Color::Cyan));
@@ -256,7 +282,9 @@ mod tests {
                 _ => None,
             },
         )
-        .expect("status line");
+        .expect("status line")
+        .lines
+        .remove(/*index*/ 0);
 
         assert_eq!(line.spans[0].style.fg, Some(Color::Red));
         assert!(!line.spans[0].style.add_modifier.contains(Modifier::DIM));
@@ -276,7 +304,9 @@ mod tests {
             /*thread_id*/ None,
             |_| None,
         )
-        .expect("thread usage status line");
+        .expect("thread usage status line")
+        .lines
+        .remove(/*index*/ 0);
 
         assert_eq!(line_text(&line), "5.2 credits · ~$0.21");
         assert_eq!(line.spans[0].style, line.spans[2].style);
@@ -292,7 +322,9 @@ mod tests {
             /*thread_id*/ None,
             |_| Some(Style::default().fg(Color::Rgb(255, 0, 0))),
         )
-        .expect("status line");
+        .expect("status line")
+        .lines
+        .remove(/*index*/ 0);
 
         assert_eq!(
             line.spans[0].style.fg,
@@ -315,7 +347,9 @@ mod tests {
             /*thread_id*/ None,
             |_| Some(Style::default().red()),
         )
-        .expect("status line");
+        .expect("status line")
+        .lines
+        .remove(/*index*/ 0);
 
         assert_eq!(line_text(&line), "gpt-5 · Context 12% used");
         assert_eq!(line.spans[0].style, secondary_text_style());
@@ -331,7 +365,9 @@ mod tests {
             /*thread_id*/ None,
             |_| None,
         )
-        .expect("status line");
+        .expect("status line")
+        .lines
+        .remove(/*index*/ 0);
 
         assert_eq!(line.spans[0].style, secondary_text_style().underlined());
     }
@@ -346,6 +382,67 @@ mod tests {
                 |_| None,
             ),
             None
+        );
+    }
+
+    #[test]
+    fn status_line_layout_preserves_rows_order_and_spacing() {
+        let segments = [
+            ("model", "gpt-5"),
+            ("space", ""),
+            ("space", ""),
+            ("reasoning", "high"),
+            ("line-break", ""),
+            ("git-branch", "main"),
+            ("current-dir", "/repo"),
+            ("line-break", ""),
+            ("context-used", "Context 12% used"),
+        ]
+        .into_iter()
+        .filter_map(|(id, value)| id.parse().ok().map(|item| (item, value.to_string())));
+
+        assert_eq!(
+            status_line_from_segments(
+                segments, /*use_theme_colors*/ false, /*thread_id*/ None
+            )
+            .unwrap()
+            .to_string(),
+            "gpt-5  high\nmain · /repo\nContext 12% used"
+        );
+    }
+
+    #[test]
+    fn status_line_layout_omits_empty_rows_and_trailing_spaces() {
+        let text = status_line_from_segments(
+            [
+                (StatusLineItem::LineBreak, String::new()),
+                (StatusLineItem::Space, String::new()),
+                (StatusLineItem::ModelName, "gpt-5".to_string()),
+                (StatusLineItem::Space, String::new()),
+                (StatusLineItem::LineBreak, String::new()),
+                (StatusLineItem::Space, String::new()),
+                (StatusLineItem::GitBranch, String::new()),
+                (StatusLineItem::LineBreak, String::new()),
+                (StatusLineItem::CurrentDir, "/repo".to_string()),
+                (StatusLineItem::LineBreak, String::new()),
+            ],
+            /*use_theme_colors*/ false,
+            /*thread_id*/ None,
+        );
+        assert_eq!(
+            text.map(|text| text.to_string()),
+            Some(" gpt-5\n/repo".to_string())
+        );
+        assert_eq!(
+            status_line_from_segments(
+                [
+                    (StatusLineItem::Space, String::new()),
+                    (StatusLineItem::LineBreak, String::new()),
+                ],
+                /*use_theme_colors*/ false,
+                /*thread_id*/ None,
+            ),
+            None,
         );
     }
 
@@ -380,7 +477,9 @@ mod tests {
                     Some(Style::default().fg(crate::terminal_palette::rgb_color(rgb)))
                 },
             )
-            .expect("status line");
+            .expect("status line")
+            .lines
+            .remove(/*index*/ 0);
             let area = Rect::new(
                 /*x*/ 0, /*y*/ 0, /*width*/ 42, /*height*/ 1,
             );

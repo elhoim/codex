@@ -11,6 +11,8 @@
 //! loss cancels the pending paste; a late clipboard result cannot overwrite newer input.
 //! The live voice strip renders after effort ignition, followed by the Astra sparkle when eligible.
 //! Owned transcripts keep persistent status below the composer and hints on a separate final row.
+//! Configured status rows reserve their own height and truncate independently; right-side mode
+//! indicators share the first row, while continuation rows use the full available width.
 //! Shortcut help expands above the composer, with its close hint replacing the final shortcuts row
 //! so input and persistent status stay anchored when help opens or closes.
 //! Escape dismisses visible shortcut help before editing, transcript backtracking, or interruption.
@@ -296,6 +298,7 @@ use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::text::Text;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::StatefulWidgetRef;
@@ -4282,7 +4285,7 @@ impl ChatComposer {
         }
     }
 
-    pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) -> bool {
+    pub(crate) fn set_status_line(&mut self, status_line: Option<Text<'static>>) -> bool {
         if self.footer.status_line_value == status_line {
             return false;
         }
@@ -4769,6 +4772,7 @@ impl ChatComposer {
                         if let Some(line) = truncated_status_line {
                             render_footer_line(hint_rect, buf, line);
                         }
+                        self.render_status_line_continuation(footer_rect, buf);
                     } else {
                         render_footer_from_props(
                             hint_rect,
@@ -4781,12 +4785,20 @@ impl ChatComposer {
                         );
                     }
                     if show_right && let Some(line) = &right_line {
-                        render_context_right(hint_rect, buf, line);
+                        let right_rect = if status_line_active {
+                            Rect {
+                                height: hint_rect.height.min(/*other*/ 1),
+                                ..hint_rect
+                            }
+                        } else {
+                            hint_rect
+                        };
+                        render_context_right(right_rect, buf, line);
                     }
                     if status_line_active
                         && let Some(url) = self.footer.status_line_hyperlink_url.as_deref()
                     {
-                        mark_underlined_hyperlink(buf, hint_rect, url);
+                        mark_underlined_hyperlink(buf, footer_rect, url);
                     }
                     if transition_visible
                         && let Some(transition) = &self.effort_status_line_transition
@@ -5361,7 +5373,7 @@ mod tests {
             /*enhanced_keys_supported*/ true,
             |composer| {
                 composer.set_status_line_enabled(/*enabled*/ true);
-                composer.set_status_line(Some(Line::from(
+                composer.set_status_line(Some(Text::from(
                     "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
                 )));
                 composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
@@ -5373,7 +5385,7 @@ mod tests {
             /*enhanced_keys_supported*/ true,
             |composer| {
                 composer.set_status_line_enabled(/*enabled*/ true);
-                composer.set_status_line(Some(Line::from(
+                composer.set_status_line(Some(Text::from(
                     "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
                 )));
                 composer.set_text_content("!".to_string(), Vec::new(), Vec::new());
@@ -5416,7 +5428,7 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
         composer.set_status_line_enabled(/*enabled*/ true);
-        composer.set_status_line(Some(Line::from(
+        composer.set_status_line(Some(Text::from(
             "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
         )));
         composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
@@ -5591,7 +5603,7 @@ mod tests {
         );
         let url = "https://github.com/openai/codex/pull/20252";
         composer.set_status_line_enabled(/*enabled*/ true);
-        composer.set_status_line(Some(Line::from(Span::styled(
+        composer.set_status_line(Some(Text::from(Span::styled(
             "PR #20252",
             Style::default().cyan().underlined(),
         ))));

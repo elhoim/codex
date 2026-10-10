@@ -311,7 +311,7 @@ impl TerminalTitleSetupView {
                         .filter(|item| item.enabled)
                         .map(|item| item.id.as_str()),
                 )?;
-                preview_line_for_title_items(&items, &preview_data)
+                preview_line_for_title_items(&items, &preview_data).map(Into::into)
             })
             .on_change(|items, app_event| {
                 let Some(items) = parse_terminal_title_items(

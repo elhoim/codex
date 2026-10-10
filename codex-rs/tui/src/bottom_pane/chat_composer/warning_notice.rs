@@ -48,7 +48,14 @@ impl ChatComposer {
         let width = line.width() as u16;
         let area = Rect::new(
             hint_area.right().saturating_sub(width + 1),
-            hint_area.bottom() - 1,
+            if !options.separate_status_line
+                && options.footer.is_none()
+                && self.footer.status_line_enabled
+            {
+                hint_area.y
+            } else {
+                hint_area.bottom() - 1
+            },
             width,
             /*height*/ 1,
         );

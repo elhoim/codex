@@ -6,6 +6,19 @@
 //! - **Select items**: Toggle which information is displayed
 //! - **Reorder items**: Use left/right arrows to change display order
 //! - **Preview changes**: See a live preview of the configured status line
+//! - **Layout**: Add repeatable `line-break` and `space` entries, then reorder them
+//!
+//! The ordered `tui.status_line` list also defines layout. `line-break` starts a
+//! new row; empty rows are omitted. Each `space` replaces the usual separator
+//! with one space, and repeated entries widen the gap:
+//!
+//! ```toml
+//! [tui]
+//! status_line = ["model", "space", "space", "reasoning", "line-break", "current-dir", "git-branch"]
+//! ```
+//!
+//! The picker preserves repeated layout entries and keeps an unchecked copy
+//! available so additional gaps and rows can be added before saving.
 //!
 //! # Available Status Line Items
 //!
@@ -158,12 +171,24 @@ pub(crate) enum StatusLineItem {
 
     /// Latest checklist task progress from `update_plan` (if available).
     TaskProgress,
+
+    /// Start another status row. Empty rows are omitted.
+    LineBreak,
+
+    /// Replace the default separator with a space; repeat for wider gaps.
+    Space,
 }
 
 impl StatusLineItem {
+    pub(crate) fn is_layout(self) -> bool {
+        matches!(self, Self::LineBreak | Self::Space)
+    }
+
     /// User-visible description shown in the popup.
     pub(crate) fn description(self) -> &'static str {
         match self {
+            StatusLineItem::LineBreak => "Start a new row (repeatable)",
+            StatusLineItem::Space => "One space instead of the separator (repeatable)",
             StatusLineItem::ModelName => "Current model name",
             StatusLineItem::ModelWithReasoning => "Current model name with reasoning level",
             StatusLineItem::Reasoning => "Current reasoning level",
@@ -224,6 +249,7 @@ impl StatusLineItem {
 
     pub(crate) fn preview_item(self) -> StatusSurfacePreviewItem {
         match self {
+            StatusLineItem::LineBreak | StatusLineItem::Space => StatusSurfacePreviewItem::Layout,
             StatusLineItem::ModelName => StatusSurfacePreviewItem::Model,
             StatusLineItem::ModelWithReasoning => StatusSurfacePreviewItem::ModelWithReasoning,
             StatusLineItem::Reasoning => StatusSurfacePreviewItem::Reasoning,
@@ -307,7 +333,7 @@ impl StatusLineSetupView {
                     continue;
                 };
                 let item_id = item.to_string();
-                if !used_ids.insert(item_id.clone()) {
+                if !item.is_layout() && !used_ids.insert(item_id.clone()) {
                     continue;
                 }
                 items.push(Self::status_line_select_item(
@@ -339,6 +365,10 @@ impl StatusLineSetupView {
             .list_keymap(list_keymap)
             .items(items)
             .enable_ordering()
+            .repeatable_items(vec![
+                StatusLineItem::LineBreak.to_string(),
+                StatusLineItem::Space.to_string(),
+            ])
             .on_preview(move |items| {
                 let use_theme_colors = items
                     .iter()
@@ -430,6 +460,10 @@ impl Renderable for StatusLineSetupView {
 }
 
 #[cfg(test)]
+#[path = "status_line_setup_layout_tests.rs"]
+mod layout_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::app_event_sender::AppEventSender;
@@ -437,7 +471,6 @@ mod tests {
     use pretty_assertions::assert_eq;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
-    use ratatui::text::Line;
     use tokio::sync::mpsc::unbounded_channel;
 
     use crate::app_event::AppEvent;
@@ -797,12 +830,7 @@ mod tests {
             .join("\n")
     }
 
-    fn line_text(line: Option<Line<'static>>) -> Option<String> {
-        line.map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
-        })
+    fn line_text(text: Option<ratatui::text::Text<'static>>) -> Option<String> {
+        text.map(|text| text.to_string())
     }
 }
